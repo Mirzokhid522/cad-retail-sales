@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Canada Retail Sales Tracker</title>
+    <!-- Chart.js CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        :root {
+            --notion-bg: #191919;
+            --notion-card: #202020;
+            --notion-border: rgba(255, 255, 255, 0.08);
+            --notion-text: #ffffff;
+            --notion-text-muted: #9b9a97;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+            background-color: var(--notion-bg);
+            color: var(--notion-text);
+            margin: 0;
+            padding: 40px 24px;
+        }
+
+        .header-container {
+            max-width: 1480px;
+            margin: 0 auto 35px auto;
+            border-bottom: 1px solid var(--notion-border);
+            padding-bottom: 20px;
+        }
+
+        h1 {
+            font-size: 26px;
+            font-weight: 600;
+            margin: 0;
+        }
+
+        .dashboard-grid {
+            max-width: 1480px;
+            margin: 0 auto;
+            display: flex;
+            flex-direction: column;
+            gap: 36px;
+        }
+
+        .card {
+            background-color: var(--notion-card);
+            border: 1px solid var(--notion-border);
+            border-radius: 8px;
+            padding: 24px 24px 20px 24px;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+        }
+
+        .card-header-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 16px;
+            gap: 16px;
+        }
+
+        .card-title-group {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+
+        .card-title {
+            font-size: 17px;
+            font-weight: 600;
+            margin: 0;
+            color: #f3f3f3;
+        }
+
+        .card-desc {
+            color: var(--notion-text-muted);
+            font-size: 12px;
+            margin: 0;
+        }
+
+        .release-meta {
+            display: flex;
+            gap: 12px;
+            font-size: 11px;
+            color: var(--notion-text-muted);
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid var(--notion-border);
+            padding: 6px 12px;
+            border-radius: 6px;
+            white-space: nowrap;
+        }
+
+        .release-meta span strong {
+            color: #d1d0c7;
+        }
+
+        .chart-container {
+            position: relative;
+            height: 420px;
+            width: 100%;
+        }
+
+        .loading {
+            text-align: center;
+            color: var(--notion-text-muted);
+            padding: 80px;
+            font-size: 14px;
+        }
+
+        @media (max-width: 768px) {
+            .card-header-row {
+                flex-direction: column;
+            }
+            .release-meta {
+                width: 100%;
+                justify-content: space-between;
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <div class="header-container">
+        <h1>Canada Retail Sales Tracker</h1>
+    </div>
+
+    <div class="dashboard-grid" id="dashboard">
+        <div class="loading">Loading live retail trade data...</div>
+    </div>
+
+    <script>
+        // Custom lightweight Chart.js plugin to draw percentage change on top of bars
+        const percentagePlugin = {
+            id: 'percentagePlugin',
+            afterDatasetsDraw(chart) {
+                const { ctx } = chart;
+                const meta = chart.getDatasetMeta(0); // target the bar dataset
+
+                meta.data.forEach((bar, index) => {
+                    const currentVal = chart.data.datasets[0].data[index];
+                    
+                    // Skip if first item (no previous month to compare)
+                    if (index === 0) return;
+                    
+                    const prevVal = chart.data.datasets[0].data[index - 1];
+                    if (!prevVal || prevVal === 0) return;
+
+                    const pctChange = ((currentVal - prevVal) / prevVal) * 100;
+                    const sign = pctChange >= 0 ? '+' : '';
+                    const text = `${sign}${pctChange.toFixed(1)}%`;
+
+                    ctx.save();
+                    ctx.font = '11px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+                    ctx.fillStyle = pctChange >= 0 ? '#2ecc71' : '#e74c3c'; // Green for positive, red for negative
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'bottom';
+
+                    // Position text right above the top of the bar
+                    const position = bar.tooltipPosition();
+                    ctx.fillText(text, position.x, position.y - 6);
+                    ctx.restore();
+                });
+            }
+        };
+
+        async function loadDashboardData() {
+            try {
+                const response = await fetch('/api/labor-data');
+                const data = await response.json();
+
+                if (data.error) {
+                    document.getElementById('dashboard').innerHTML = `<div class="loading" style="color: #ff6b6b;">Error: ${data.error}</div>`;
+                    return;
+                }
+
+                const grid = document.getElementById('dashboard');
+                grid.innerHTML = `
+                    <div class="card">
+                        <div class="card-header-row">
+                            <div class="card-title-group">
+                                <h3 class="card-title">Retail Sales ($ Thousands, Current Dollars)</h3>
+                                <p class="card-desc">Monthly total retail trade in Canada (Seasonally Adjusted)</p>
+                            </div>
+                            <div class="release-meta">
+                                <span>Released: <strong>September 24, 2026</strong></span>
+                                <span>•</span>
+                                <span>Next Release: <strong style="color: #f1c40f;">October 23, 2026</strong></span>
+                            </div>
+                        </div>
+                        <div class="chart-container">
+                            <canvas id="retailChart"></canvas>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <div class="card-header-row">
+                            <div class="card-title-group">
+                                <h3 class="card-title">Core Retail Sales ($ Thousands, Current Dollars)</h3>
+                                <p class="card-desc">Retail trade excluding motor vehicle and parts dealers (Seasonally Adjusted)</p>
+                            </div>
+                            <div class="release-meta">
+                                <span>Released: <strong>September 24, 2026</strong></span>
+                                <span>•</span>
+                                <span>Next Release: <strong style="color: #f1c40f;">October 23, 2026</strong></span>
+                            </div>
+                        </div>
+                        <div class="chart-container">
+                            <canvas id="coreRetailChart"></canvas>
+                        </div>
+                    </div>
+                `;
+
+                function getAxisBounds(values) {
+                    const min = Math.min(...values);
+                    const max = Math.max(...values);
+                    const padding = (max - min) * 0.45 || 100000;
+                    return {
+                        min: Math.floor((min - padding) / 1000) * 1000,
+                        max: Math.ceil((max + padding) / 1000) * 1000
+                    };
+                }
+
+                function createRetailChart(canvasId, values, barColorHex, barRgba) {
+                    const bounds = getAxisBounds(values);
+
+                    return new Chart(document.getElementById(canvasId), {
+                        type: 'bar',
+                        data: {
+                            labels: data.months,
+                            datasets: [
+                                {
+                                    type: 'bar',
+                                    label: 'Monthly Value',
+                                    data: values,
+                                    backgroundColor: barRgba,
+                                    borderColor: barColorHex,
+                                    borderWidth: 0,
+                                    borderRadius: 2,
+                                    barPercentage: 0.82,
+                                    categoryPercentage: 0.92,
+                                    order: 2
+                                },
+                                {
+                                    type: 'line',
+                                    label: 'Trend',
+                                    data: values,
+                                    borderColor: '#f1c40f',
+                                    backgroundColor: 'transparent',
+                                    borderWidth: 2.5,
+                                    pointRadius: 2,
+                                    pointHoverRadius: 5,
+                                    pointBackgroundColor: '#f1c40f',
+                                    tension: 0.3,
+                                    order: 1
+                                }
+                            ]
+                        },
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            interaction: {
+                                mode: 'index',
+                                intersect: false,
+                            },
+                            plugins: {
+                                legend: { display: false },
+                                tooltip: {
+                                    backgroundColor: 'rgba(24, 24, 24, 0.95)',
+                                    titleFont: { size: 12 },
+                                    bodyFont: { size: 13, weight: '600' },
+                                    padding: 12,
+                                    borderColor: 'rgba(255, 255, 255, 0.15)',
+                                    borderWidth: 1,
+                                    cornerRadius: 4
+                                }
+                            },
+                            scales: {
+                                x: {
+                                    grid: { color: 'rgba(255, 255, 255, 0.05)', drawBorder: false },
+                                    ticks: { color: '#8b8a87', font: { size: 11 }, maxTicksLimit: 14 }
+                                },
+                                y: {
+                                    min: bounds.min,
+                                    max: bounds.max,
+                                    grid: { color: 'rgba(255, 255, 255, 0.05)', drawBorder: false },
+                                    ticks: { color: '#8b8a87', font: { size: 11 }, padding: 6 }
+                                }
+                            }
+                        },
+                        plugins: [percentagePlugin]
+                    });
+                }
+
+                createRetailChart('retailChart', data.retail_sales, '#3498db', 'rgba(52, 152, 219, 0.75)');
+                createRetailChart('coreRetailChart', data.core_retail_sales, '#e67e22', 'rgba(230, 126, 34, 0.75)');
+
+            } catch (err) {
+                console.error("Failed to load chart data:", err);
+                document.getElementById('dashboard').innerHTML = `<div class="loading" style="color: #ff6b6b;">Failed to connect to backend API.</div>`;
+            }
+        }
+
+        loadDashboardData();
+    </script>
+</body>
+</html>
